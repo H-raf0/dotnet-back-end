@@ -75,13 +75,27 @@ namespace GameServerApi.Controllers
         [HttpPost("Register")]
         public async Task<ActionResult<UserPublic>> RegisterUser([FromBody] UserRegister newUser)
         {
-            // Check if username already exists
+            if(newUser.Terms == false)
+            {
+                return BadRequest(new ErrorResponse(
+                    "Terms must be accepted",
+                    "TERMS_NOT_ACCEPTED"
+                ));
+            }
+            if(newUser.Password != newUser.ConfirmPassword)
+            {
+                return BadRequest(new ErrorResponse(
+                    "Passwords do not match",
+                    "PASSWORDS_DO_NOT_MATCH"
+                ));
+            }
+            // Check if email already exists
             bool exists = await _context.Users.AnyAsync(u => u.Email == newUser.Email);
             if (exists)
             {
                 return BadRequest(new ErrorResponse(
-                    "Username already exists",
-                    "USERNAME_EXISTS"
+                    "Email already exists",
+                    "EMAIL_EXISTS"
                 ));
             }
 

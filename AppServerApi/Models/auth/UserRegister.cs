@@ -14,5 +14,13 @@ public record UserRegister(
     [Required(ErrorMessage = "Le mot de passe est obligatoire.")]
     [StringLength(20, MinimumLength = 4, ErrorMessage = "Le mot de passe doit contenir entre 4 et 20 caractères.")]
     [RegularExpression(@"^[a-zA-Z0-9&^!@#]+$", ErrorMessage = "Le mot de passe doit contenir uniquement des lettres, des chiffres et les caractères spéciaux &^!@#.")]
-    string Password
+    string Password,
+
+    [Required(ErrorMessage = "La confirmation du mot de passe est obligatoire.")]
+    [StringLength(20, MinimumLength = 4, ErrorMessage = "Le mot de passe doit contenir entre 4 et 20 caractères.")]
+    [RegularExpression(@"^[a-zA-Z0-9&^!@#]+$", ErrorMessage = "Le mot de passe doit contenir uniquement des lettres, des chiffres et les caractères spéciaux &^!@#.")]
+    string ConfirmPassword,
+
+    [Required(ErrorMessage = "L'acceptation des termes est obligatoire.")]
+    bool Terms
 );

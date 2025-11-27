@@ -144,7 +144,7 @@ namespace GameServerApi.Controllers
             var user = await _context.Users
                 .FirstOrDefaultAsync(u => u.Email == userLogin.Email);
 
-            // non trouvé ou mot de passe incorrect
+            // not found or incorrect password
             if (user == null)
             {
                 return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
@@ -158,7 +158,7 @@ namespace GameServerApi.Controllers
             var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Username);
             var refreshToken = await _tokenService.CreateRefreshTokenAsync(user.Id, 7);
 
-            // si tout est bon, on retourne les infos publiques avec les tokens
+            // if successful login, return tokens and user data
             var userPublic = new UserPublic(user.Id.ToString(), user.Username, user.Email, user.CreatedAt.ToString("o"), user.UpdatedAt.ToString("o"), user.Language);
             var response = new LoginResponse(accessToken, refreshToken.Token, userPublic);
             return Ok(response);

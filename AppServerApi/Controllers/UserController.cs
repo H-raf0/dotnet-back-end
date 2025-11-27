@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 
 using GameServerApi.Models;
+using GameServerApi.Models.auth;
+using GameServerApi.Services;
 
 namespace GameServerApi.Controllers
 {
@@ -15,9 +17,14 @@ namespace GameServerApi.Controllers
     {
 
         private readonly UserContext _context;
-        public UserController(UserContext ctx)
+        private readonly IJwtService _jwtService;
+        private readonly ITokenService _tokenService;
+        
+        public UserController(UserContext ctx, IJwtService jwtService, ITokenService tokenService)
         {
             _context = ctx;
+            _jwtService = jwtService;
+            _tokenService = tokenService;
         }
 
         // GET: api/<UserController>/All
@@ -26,7 +33,7 @@ namespace GameServerApi.Controllers
         public async Task<ActionResult<List<UserPublic>>> GetAllUsers()
         {
             var users = await _context.Users
-                .Select(u => new UserPublic(u.Id, u.Username, u.Email))
+                .Select(u => new UserPublic(u.Id.ToString(), u.Username, u.Email, u.CreatedAt.ToString("o"), u.UpdatedAt.ToString("o"), u.Language))
                 .ToListAsync();
 
             return Ok(users);
@@ -40,7 +47,7 @@ namespace GameServerApi.Controllers
         {
             var user = await _context.Users
                 .Where(u => u.Id == id)
-                .Select(u => new UserPublic(u.Id, u.Username, u.Email))
+                .Select(u => new UserPublic(u.Id.ToString(), u.Username, u.Email, u.CreatedAt.ToString("o"), u.UpdatedAt.ToString("o"), u.Language))
                 .FirstOrDefaultAsync();
 
             if (user == null)
@@ -66,14 +73,14 @@ namespace GameServerApi.Controllers
                 .Where(u => u.Username.ToLower().Contains(lowerName) || u.Username.ToLower() == lowerName)
                 .ToListAsync();
 
-            var result = users.Select(u => new UserPublic(u.Id, u.Username, u.Email));
+            var result = users.Select(u => new UserPublic(u.Id.ToString(), u.Username, u.Email, u.CreatedAt.ToString("o"), u.UpdatedAt.ToString("o"), u.Language));
             return Ok(result);
         }
 
-        // POST api/<UserController>
+        // POST api/<UserController>/Register
         
         [HttpPost("Register")]
-        public async Task<ActionResult<UserPublic>> RegisterUser([FromBody] UserRegister newUser)
+        public async Task<ActionResult<RegisterResponse>> RegisterUser([FromBody] UserRegister newUser)
         {
             if(newUser.Terms == false)
             {
@@ -82,15 +89,12 @@ namespace GameServerApi.Controllers
                     "TERMS_NOT_ACCEPTED"
                 ));
             }
-            if(newUser.Password != newUser.ConfirmPassword)
-            {
-                return BadRequest(new ErrorResponse(
-                    "Passwords do not match",
-                    "PASSWORDS_DO_NOT_MATCH"
-                ));
-            }
+            
+            // Normalize email to lowercase for consistency
+            string normalizedEmail = newUser.Email.ToLower();
+            
             // Check if email already exists
-            bool exists = await _context.Users.AnyAsync(u => u.Email == newUser.Email);
+            bool exists = await _context.Users.AnyAsync(u => u.Email == normalizedEmail);
             if (exists)
             {
                 return BadRequest(new ErrorResponse(
@@ -103,15 +107,22 @@ namespace GameServerApi.Controllers
             {
 
                 // Create user with password (constructor handles hashing)
-                User user = new User(newUser.Username, newUser.Password, newUser.Email);
+                User user = new User(newUser.Username, newUser.Password, normalizedEmail);
 
                 _context.Users.Add(user);
                 await _context.SaveChangesAsync();
 
-                // Return 201 Created
+                // Generate tokens
+                var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Username);
+                var refreshToken = await _tokenService.CreateRefreshTokenAsync(user.Id, 7);
+
+                // Return 201 Created with tokens and user data
+                var userPublic = new UserPublic(user.Id.ToString(), user.Username, user.Email, user.CreatedAt.ToString("o"), user.UpdatedAt.ToString("o"), user.Language);
+                var response = new RegisterResponse(accessToken, refreshToken.Token, userPublic);
+                
                 return CreatedAtAction(nameof(GetUserById),
                     new { id = user.Id },
-                    new UserPublic(user.Id, user.Username, user.Email));
+                    response);
             }
             catch
             {
@@ -125,28 +136,78 @@ namespace GameServerApi.Controllers
         
 
 
-        // POST api/<UserController>
+        // POST api/<UserController>/Login
         
         [HttpPost("Login")]
-        public async Task<ActionResult<UserPublic>> Login([FromBody] UserPass userPass)
+        public async Task<ActionResult<LoginResponse>> Login([FromBody] UserLogin userLogin)
         {
             var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Email == userPass.Email);
+                .FirstOrDefaultAsync(u => u.Email == userLogin.Email);
 
             // non trouvé ou mot de passe incorrect
             if (user == null)
             {
                 return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
             }
-            if (!user.VerifyPassword(userPass.Password))
+            if (!user.VerifyPassword(userLogin.Password))
             {
                 return Unauthorized(new ErrorResponse("invalid password", "INVALID_PASSWORD"));
             }
 
+            // Generate tokens
+            var accessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Username);
+            var refreshToken = await _tokenService.CreateRefreshTokenAsync(user.Id, 7);
 
-            // si tout est bon, on retourne les infos publiques
-            var userPublic = new UserPublic(user.Id, user.Username, user.Email);
-            return Ok(userPublic);
+            // si tout est bon, on retourne les infos publiques avec les tokens
+            var userPublic = new UserPublic(user.Id.ToString(), user.Username, user.Email, user.CreatedAt.ToString("o"), user.UpdatedAt.ToString("o"), user.Language);
+            var response = new LoginResponse(accessToken, refreshToken.Token, userPublic);
+            return Ok(response);
+        }
+        
+        // POST api/<UserController>/RefreshToken
+        
+        [HttpPost("RefreshToken")]
+        public async Task<ActionResult<RefreshTokenResponse>> RefreshTokenEndpoint([FromBody] RefreshTokenRequest request)
+        {
+            try
+            {
+                var principal = _jwtService.GetPrincipalFromExpiredToken(request.RefreshToken);
+                if (principal == null)
+                {
+                    return Unauthorized(new ErrorResponse("Invalid token", "INVALID_TOKEN"));
+                }
+
+                var userIdClaim = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
+                if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out var userId))
+                {
+                    return Unauthorized(new ErrorResponse("Invalid token claims", "INVALID_TOKEN_CLAIMS"));
+                }
+
+                var validToken = await _tokenService.ValidateRefreshTokenAsync(request.RefreshToken, userId);
+                if (validToken == null)
+                {
+                    return Unauthorized(new ErrorResponse("Refresh token expired or revoked", "INVALID_REFRESH_TOKEN"));
+                }
+
+                var user = await _context.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
+                }
+
+                var newAccessToken = _jwtService.GenerateAccessToken(user.Id, user.Email, user.Username);
+                var newRefreshToken = await _tokenService.CreateRefreshTokenAsync(user.Id, 7);
+
+                // Revoke the old refresh token
+                await _tokenService.RevokeRefreshTokenAsync(request.RefreshToken);
+
+                var response = new RefreshTokenResponse(newAccessToken, newRefreshToken.Token);
+                return Ok(response);
+            }
+            catch
+            {
+                return Unauthorized(new ErrorResponse("Token refresh failed", "TOKEN_REFRESH_FAILED"));
+            }
         }
         
 

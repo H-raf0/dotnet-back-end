@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-public record UserPass(
+public record UserLogin(
     
     [Required(ErrorMessage = "L'email est obligatoire.")]
     [EmailAddress(ErrorMessage = "L'email doit être une adresse e-mail valide.")]

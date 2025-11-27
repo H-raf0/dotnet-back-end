@@ -59,18 +59,18 @@ namespace GameServerApi.Controllers
         }
         
 
-        // GET api/<UserController>/Search/{name}
+        // GET api/<UserController>/Search/{username}
         
-        [HttpGet("Search/{name}")]
-        public async Task<ActionResult<IEnumerable<UserPublic>>> SearchUsers(string name)
+        [HttpGet("Search/{username}")]
+        public async Task<ActionResult<IEnumerable<UserPublic>>> SearchUsers(string username)
         {
-            if (string.IsNullOrWhiteSpace(name))
+            if (string.IsNullOrWhiteSpace(username))
                 return Ok(Array.Empty<UserPublic>());
 
-            var lowerName = name.ToLower();
+            var lowerUsername = username.ToLower();
 
             var users = await _context.Users
-                .Where(u => u.Username.ToLower().Contains(lowerName) || u.Username.ToLower() == lowerName)
+                .Where(u => u.Username.ToLower().Contains(lowerUsername) || u.Username.ToLower() == lowerUsername)
                 .ToListAsync();
 
             var result = users.Select(u => new UserPublic(u.Id.ToString(), u.Username, u.Email, u.CreatedAt.ToString("o"), u.UpdatedAt.ToString("o"), u.Language));

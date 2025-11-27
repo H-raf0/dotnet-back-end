@@ -1,6 +1,6 @@
 public record UserPublic(
     string Id,
-    string Name,
+    string Username,
     string Email,
     string CreatedAt,
     string UpdatedAt,

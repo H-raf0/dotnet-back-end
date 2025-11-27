@@ -112,12 +112,12 @@ namespace GameServerApi.Controllers
 
 
         // POST api/<UserController>
-        /*
+        
         [HttpPost("Login")]
         public async Task<ActionResult<UserPublic>> Login([FromBody] UserPass userPass)
         {
             var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Username == userPass.Username);
+                .FirstOrDefaultAsync(u => u.Email == userPass.Email);
 
             // non trouvé ou mot de passe incorrect
             if (user == null)
@@ -131,10 +131,10 @@ namespace GameServerApi.Controllers
 
 
             // si tout est bon, on retourne les infos publiques
-            var userPublic = new UserPublic(user.Id, user.Username, user.Role);
+            var userPublic = new UserPublic(user.Id, user.Username, user.Email);
             return Ok(userPublic);
         }
-        */
+        
 
 
 

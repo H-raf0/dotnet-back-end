@@ -13,10 +13,10 @@ public interface ITokenService
 
 public class TokenService : ITokenService
 {
-    private readonly UserContext _context;
+    private readonly AppDbContext _context;
     private readonly IJwtService _jwtService;
 
-    public TokenService(UserContext context, IJwtService jwtService)
+    public TokenService(AppDbContext context, IJwtService jwtService)
     {
         _context = context;
         _jwtService = jwtService;

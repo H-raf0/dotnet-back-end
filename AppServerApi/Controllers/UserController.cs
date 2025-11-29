@@ -16,11 +16,11 @@ namespace GameServerApi.Controllers
     public class UserController : ControllerBase
     {
 
-        private readonly UserContext _context;
+        private readonly AppDbContext _context;
         private readonly IJwtService _jwtService;
         private readonly ITokenService _tokenService;
         
-        public UserController(UserContext ctx, IJwtService jwtService, ITokenService tokenService)
+        public UserController(AppDbContext ctx, IJwtService jwtService, ITokenService tokenService)
         {
             _context = ctx;
             _jwtService = jwtService;

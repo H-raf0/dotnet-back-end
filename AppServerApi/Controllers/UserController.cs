@@ -5,13 +5,18 @@ using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+
+
 using AppServerApi.Models;
 using AppServerApi.Models.auth;
 using AppServerApi.Services;
 
+
 namespace AppServerApi.Controllers
 {
-    [Route("api/users")]
+    [Route("api/User")]
     [ApiController]
     public class UserController : ControllerBase
     {

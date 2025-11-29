@@ -63,16 +63,17 @@ namespace AppServerApi.Controllers
             return Ok(user);
         }
 
-        // GET api/<UserController>/me
+        // GET api/<UserController>/Me
         [Authorize]
-        [HttpGet("me")]
+        [HttpGet("Me")]
         public async Task<ActionResult<UserPublic>> GetUserMe()
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
             if (userId == null)
+            {
                 return Unauthorized(new ErrorResponse("Invalid token claims", "INVALID_TOKEN_CLAIMS"));
-
+            }
             var user = await _context.Users
                 .Where(u => u.Id.ToString() == userId)
                 .Select(u => new UserPublic(
@@ -86,8 +87,9 @@ namespace AppServerApi.Controllers
                 .FirstOrDefaultAsync();
 
             if (user == null)
+            {
                 return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
-
+            }
             return Ok(user);
         }
 
@@ -245,6 +247,60 @@ namespace AppServerApi.Controllers
         }
 
 
+        [HttpPut("UpdateMe")]
+        public async Task<ActionResult<User>> UpdateUserMe([FromBody] UserUpdate userUpdate)
+        {
+            // Check if the user exists
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (userId == null)
+            {
+                return Unauthorized(new ErrorResponse("Invalid token claims", "INVALID_TOKEN_CLAIMS"));
+            }
+
+           var user = await _context.Users.Where(u => u.Id.ToString() == userId).FirstOrDefaultAsync();
+
+            if (user == null)
+            {
+                return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
+            }
+
+            // Update username
+            if (!string.IsNullOrEmpty(userUpdate.Username))
+            {
+                user.Username = userUpdate.Username;
+            }
+            // Update language
+            if (!string.IsNullOrEmpty(userUpdate.Language))
+            {
+                user.Language = userUpdate.Language;
+            }
+
+            // Update email
+            if (!string.IsNullOrEmpty(userUpdate.Email))
+            {
+                user.Email = userUpdate.Email;
+            }
+
+            // Update password
+            if (!string.IsNullOrEmpty(userUpdate.Password))
+            {
+                user.UpdatePassword(userUpdate.Password);
+            }
+
+            // Save changes
+            await _context.SaveChangesAsync();
+
+            return Ok(new UserPublic(
+                user.Id.ToString(),
+                user.Username,
+                user.Email,
+                user.CreatedAt.ToString("o"),
+                user.UpdatedAt.ToString("o"),
+                user.Language
+            ));
+
+        }
 
 
 

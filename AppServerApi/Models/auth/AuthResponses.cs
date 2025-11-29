@@ -1,4 +1,4 @@
-namespace GameServerApi.Models.auth;
+namespace AppServerApi.Models.auth;
 
 public record RegisterResponse(
     string AccessToken,

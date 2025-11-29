@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using GameServerApi.Models.auth;
-namespace GameServerApi.Models;
+using AppServerApi.Models.auth;
+namespace AppServerApi.Models;
 
 public class AppDbContext : DbContext
 {

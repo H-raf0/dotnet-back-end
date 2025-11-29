@@ -5,13 +5,13 @@ using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 
-using GameServerApi.Models;
-using GameServerApi.Models.auth;
-using GameServerApi.Services;
+using AppServerApi.Models;
+using AppServerApi.Models.auth;
+using AppServerApi.Services;
 
-namespace GameServerApi.Controllers
+namespace AppServerApi.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("api/users")]
     [ApiController]
     public class UserController : ControllerBase
     {
@@ -19,7 +19,7 @@ namespace GameServerApi.Controllers
         private readonly AppDbContext _context;
         private readonly IJwtService _jwtService;
         private readonly ITokenService _tokenService;
-        
+
         public UserController(AppDbContext ctx, IJwtService jwtService, ITokenService tokenService)
         {
             _context = ctx;
@@ -28,7 +28,7 @@ namespace GameServerApi.Controllers
         }
 
         // GET: api/<UserController>/All
-        
+
         [HttpGet("All")]
         public async Task<ActionResult<List<UserPublic>>> GetAllUsers()
         {
@@ -38,10 +38,10 @@ namespace GameServerApi.Controllers
 
             return Ok(users);
         }
-        
+
 
         // GET api/<UserController>/{id}
-        
+
         [HttpGet("{id}")]
         public async Task<ActionResult<UserPublic>> GetUserById(int id)
         {
@@ -57,10 +57,39 @@ namespace GameServerApi.Controllers
 
             return Ok(user);
         }
-        
+
+        // GET api/<UserController>/me
+        [Authorize]
+        [HttpGet("me")]
+        public async Task<ActionResult<UserPublic>> GetUserMe()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (userId == null)
+                return Unauthorized(new ErrorResponse("Invalid token claims", "INVALID_TOKEN_CLAIMS"));
+
+            var user = await _context.Users
+                .Where(u => u.Id.ToString() == userId)
+                .Select(u => new UserPublic(
+                    u.Id.ToString(),
+                    u.Username,
+                    u.Email,
+                    u.CreatedAt.ToString("o"),
+                    u.UpdatedAt.ToString("o"),
+                    u.Language
+                ))
+                .FirstOrDefaultAsync();
+
+            if (user == null)
+                return NotFound(new ErrorResponse("User not found", "USER_NOT_FOUND"));
+
+            return Ok(user);
+        }
+
+
 
         // GET api/<UserController>/Search/{username}
-        
+
         [HttpGet("Search/{username}")]
         public async Task<ActionResult<IEnumerable<UserPublic>>> SearchUsers(string username)
         {
@@ -78,21 +107,21 @@ namespace GameServerApi.Controllers
         }
 
         // POST api/<UserController>/Register
-        
+
         [HttpPost("Register")]
         public async Task<ActionResult<RegisterResponse>> RegisterUser([FromBody] UserRegister newUser)
         {
-            if(newUser.Terms == false)
+            if (newUser.Terms == false)
             {
                 return BadRequest(new ErrorResponse(
                     "Terms must be accepted",
                     "TERMS_NOT_ACCEPTED"
                 ));
             }
-            
+
             // Normalize email to lowercase for consistency
             string normalizedEmail = newUser.Email.ToLower();
-            
+
             // Check if email already exists
             bool exists = await _context.Users.AnyAsync(u => u.Email == normalizedEmail);
             if (exists)
@@ -119,7 +148,7 @@ namespace GameServerApi.Controllers
                 // Return 201 Created with tokens and user data
                 var userPublic = new UserPublic(user.Id.ToString(), user.Username, user.Email, user.CreatedAt.ToString("o"), user.UpdatedAt.ToString("o"), user.Language);
                 var response = new RegisterResponse(accessToken, refreshToken.Token, userPublic);
-                
+
                 return CreatedAtAction(nameof(GetUserById),
                     new { id = user.Id },
                     response);
@@ -133,11 +162,11 @@ namespace GameServerApi.Controllers
                 ));
             }
         }
-        
+
 
 
         // POST api/<UserController>/Login
-        
+
         [HttpPost("Login")]
         public async Task<ActionResult<LoginResponse>> Login([FromBody] UserLogin userLogin)
         {
@@ -163,9 +192,9 @@ namespace GameServerApi.Controllers
             var response = new LoginResponse(accessToken, refreshToken.Token, userPublic);
             return Ok(response);
         }
-        
+
         // POST api/<UserController>/RefreshToken
-        
+
         [HttpPost("RefreshToken")]
         public async Task<ActionResult<RefreshTokenResponse>> RefreshTokenEndpoint([FromBody] RefreshTokenRequest request)
         {
@@ -209,7 +238,7 @@ namespace GameServerApi.Controllers
                 return Unauthorized(new ErrorResponse("Token refresh failed", "TOKEN_REFRESH_FAILED"));
             }
         }
-        
+
 
 
 
@@ -280,6 +309,6 @@ namespace GameServerApi.Controllers
 
         }
         */
-        
+
     }
 }

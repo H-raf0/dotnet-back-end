@@ -5,7 +5,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 
-namespace GameServerApi.Services;
+namespace AppServerApi.Services;
 
 public interface IJwtService
 {

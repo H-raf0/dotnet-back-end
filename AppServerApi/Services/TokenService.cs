@@ -1,8 +1,8 @@
-using GameServerApi.Models;
-using GameServerApi.Models.auth;
+using AppServerApi.Models;
+using AppServerApi.Models.auth;
 using Microsoft.EntityFrameworkCore;
 
-namespace GameServerApi.Services;
+namespace AppServerApi.Services;
 
 public interface ITokenService
 {

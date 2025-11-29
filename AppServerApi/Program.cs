@@ -1,9 +1,9 @@
 
-namespace GameServerApi;
+namespace AppServerApi;
 
 using Scalar.AspNetCore;
-using GameServerApi.Models;
-using GameServerApi.Services;
+using AppServerApi.Models;
+using AppServerApi.Services;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -60,6 +60,7 @@ public class Program
                     ClockSkew = TimeSpan.Zero
                 };
             });
+
 
         builder.Services.AddCors(options =>
             {

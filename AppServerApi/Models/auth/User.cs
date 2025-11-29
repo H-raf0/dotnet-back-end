@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Identity;
-using GameServerApi.Models.auth;
+using AppServerApi.Models.auth;
 
 public class User
 {

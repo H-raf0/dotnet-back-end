@@ -12,6 +12,10 @@ public class User
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string Language { get; set; } = "en"; // Default language
     
+    // Portfolio fields per user
+    public double Balance { get; set; } = 10000; // Initial balance for new users
+    public string StocksJson { get; set; } = "{}"; // JSON string: { "SYMBOL": quantity }
+    
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 
     public User(string username, string password, string email)

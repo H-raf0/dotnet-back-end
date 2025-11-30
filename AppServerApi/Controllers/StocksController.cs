@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Security.Claims;
 using AppServerApi.Models;
 
 namespace AppServerApi.Controllers;
@@ -14,13 +17,8 @@ public class StocksController : ControllerBase
 
     // Keep price histories and other non-critical time-series in memory only.
     private static readonly Dictionary<string, List<double>> PriceHistories = new();
-
-    // In-memory portfolio for demo purposes. In a real app this should be per-user and persisted.
-    private static readonly PortfolioDto Portfolio = new()
-    {
-        Balance = 10000,
-        Stocks = new Dictionary<string,int>()
-    };
+    // Ensure we only start the simulator once per app lifetime
+    private static bool SimulatorStarted = false;
 
     public StocksController(AppDbContext db)
     {
@@ -47,7 +45,72 @@ public class StocksController : ControllerBase
                 PriceHistories["3"] = new List<double>{75,76,77,78,77.5,78,78.2,78.8,78.3,78.5};
                 PriceHistories["4"] = new List<double>{200,202,205,207,208,209,210,210.5,210.2,210.1};
             }
+
+            // Ensure price histories exist for any stocks (including persisted ones)
+            var allStocks = _db.Stocks.ToList();
+            foreach (var s in allStocks)
+            {
+                if (!PriceHistories.ContainsKey(s.Id))
+                {
+                    // initialize with a short history that ends with the persisted price
+                    PriceHistories[s.Id] = new List<double> { Math.Round(s.Price, 2) };
+                }
+            }
+
+            // Start a background simulator (only once) that perturbs prices every 2 seconds
+            if (!SimulatorStarted)
+            {
+                SimulatorStarted = true;
+                // Run without awaiting - background fire-and-forget loop
+                _ = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    var rnd = new Random();
+                    while (true)
+                    {
+                        try
+                        {
+                            await System.Threading.Tasks.Task.Delay(2000);
+                            lock (Locker)
+                            {
+                                var stocksToUpdate = _db.Stocks.ToList();
+                                foreach (var stk in stocksToUpdate)
+                                {
+                                    // Small random walk + mean reversion to limit drift
+                                    var prev = stk.Price;
+                                    var noise = (rnd.NextDouble() - 0.5) * 0.02; // ±1%
+                                    var meanRevert = 1 + (0 - noise) * 0.001;
+                                    var newP = Math.Round(prev * (1 + noise) * meanRevert, 2);
+                                    if (newP <= 0) newP = Math.Round(prev * (1 + noise), 2);
+
+                                    stk.Price = newP;
+                                    stk.Change = Math.Round((newP - prev) / (prev == 0 ? 1 : prev) * 100, 2);
+
+                                    if (!PriceHistories.ContainsKey(stk.Id)) PriceHistories[stk.Id] = new List<double> { prev };
+                                    PriceHistories[stk.Id].Add(stk.Price);
+                                    if (PriceHistories[stk.Id].Count > 250) PriceHistories[stk.Id].RemoveAt(0);
+                                }
+                                _db.SaveChanges();
+                            }
+                        }
+                        catch
+                        {
+                            // swallow simulator errors to avoid crashing the background loop
+                        }
+                    }
+                });
+            }
         }
+    }
+
+    // Helper method to get the current user ID from JWT token
+    private int GetUserId()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+        if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
+        {
+            return userId;
+        }
+        return 0;
     }
 
     [HttpGet]
@@ -62,40 +125,110 @@ public class StocksController : ControllerBase
     }
 
     [HttpGet("portfolio")]
+    [Authorize]
     public ActionResult<PortfolioDto> GetPortfolio()
     {
+        var userId = GetUserId();
+        if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
+
         lock (Locker)
         {
-            return Ok(Portfolio);
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
+
+            var stocks = new Dictionary<string, int>();
+            try
+            {
+                if (!string.IsNullOrEmpty(user.StocksJson))
+                {
+                    stocks = JsonSerializer.Deserialize<Dictionary<string, int>>(user.StocksJson) ?? new();
+                }
+            }
+            catch
+            {
+                stocks = new();
+            }
+
+            return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
     }
 
     [HttpPost("portfolio/addMoney")]
+    [Authorize]
     public ActionResult<PortfolioDto> AddMoney([FromBody] AddMoneyRequest req)
     {
         if (req == null || req.Amount <= 0) return BadRequest(new { message = "Invalid amount", code = "INVALID_AMOUNT" });
+
+        var userId = GetUserId();
+        if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
+
         lock (Locker)
         {
-            Portfolio.Balance += req.Amount;
-            return Ok(Portfolio);
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
+
+            user.Balance += req.Amount;
+            user.UpdatedAt = DateTime.UtcNow;
+            _db.SaveChanges();
+
+            var stocks = new Dictionary<string, int>();
+            try
+            {
+                if (!string.IsNullOrEmpty(user.StocksJson))
+                {
+                    stocks = JsonSerializer.Deserialize<Dictionary<string, int>>(user.StocksJson) ?? new();
+                }
+            }
+            catch
+            {
+                stocks = new();
+            }
+
+            return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
     }
 
     [HttpPost("portfolio/buy")]
+    [Authorize]
     public ActionResult<PortfolioDto> Buy([FromBody] BuySellRequest req)
     {
         if (req == null || req.Quantity <= 0) return BadRequest(new { message = "Invalid quantity", code = "INVALID_QUANTITY" });
+
+        var userId = GetUserId();
+        if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
+
         lock (Locker)
         {
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
+
             var stock = _db.Stocks.FirstOrDefault(s => s.Id == req.StockId || s.Symbol == req.StockId);
             if (stock == null) return NotFound(new { message = "Stock not found", code = "STOCK_NOT_FOUND" });
 
             var cost = stock.Price * req.Quantity;
-            if (Portfolio.Balance < cost) return BadRequest(new { message = "Insufficient funds", code = "INSUFFICIENT_FUNDS" });
+            if (user.Balance < cost) return BadRequest(new { message = "Insufficient funds", code = "INSUFFICIENT_FUNDS" });
 
-            Portfolio.Balance -= cost;
-            if (Portfolio.Stocks.ContainsKey(stock.Symbol)) Portfolio.Stocks[stock.Symbol] += req.Quantity;
-            else Portfolio.Stocks[stock.Symbol] = req.Quantity;
+            // Update user balance and stocks
+            user.Balance -= cost;
+
+            var stocks = new Dictionary<string, int>();
+            try
+            {
+                if (!string.IsNullOrEmpty(user.StocksJson))
+                {
+                    stocks = JsonSerializer.Deserialize<Dictionary<string, int>>(user.StocksJson) ?? new();
+                }
+            }
+            catch
+            {
+                stocks = new();
+            }
+
+            if (stocks.ContainsKey(stock.Symbol)) stocks[stock.Symbol] += req.Quantity;
+            else stocks[stock.Symbol] = req.Quantity;
+
+            user.StocksJson = JsonSerializer.Serialize(stocks);
+            user.UpdatedAt = DateTime.UtcNow;
 
             // small price impact persisted to DB
             var prev = stock.Price;
@@ -109,26 +242,50 @@ public class StocksController : ControllerBase
             PriceHistories[stock.Id].Add(stock.Price);
             if (PriceHistories[stock.Id].Count > 250) PriceHistories[stock.Id].RemoveAt(0);
 
-            return Ok(Portfolio);
+            return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
     }
 
     [HttpPost("portfolio/sell")]
+    [Authorize]
     public ActionResult<PortfolioDto> Sell([FromBody] BuySellRequest req)
     {
         if (req == null || req.Quantity <= 0) return BadRequest(new { message = "Invalid quantity", code = "INVALID_QUANTITY" });
+
+        var userId = GetUserId();
+        if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
+
         lock (Locker)
         {
+            var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+            if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
+
             var stock = _db.Stocks.FirstOrDefault(s => s.Id == req.StockId || s.Symbol == req.StockId);
             if (stock == null) return NotFound(new { message = "Stock not found", code = "STOCK_NOT_FOUND" });
 
-            var owned = Portfolio.Stocks.ContainsKey(stock.Symbol) ? Portfolio.Stocks[stock.Symbol] : 0;
+            var stocks = new Dictionary<string, int>();
+            try
+            {
+                if (!string.IsNullOrEmpty(user.StocksJson))
+                {
+                    stocks = JsonSerializer.Deserialize<Dictionary<string, int>>(user.StocksJson) ?? new();
+                }
+            }
+            catch
+            {
+                stocks = new();
+            }
+
+            var owned = stocks.ContainsKey(stock.Symbol) ? stocks[stock.Symbol] : 0;
             if (owned < req.Quantity) return BadRequest(new { message = "Not enough shares", code = "INSUFFICIENT_SHARES" });
 
             var proceeds = stock.Price * req.Quantity;
-            Portfolio.Balance += proceeds;
-            Portfolio.Stocks[stock.Symbol] = owned - req.Quantity;
-            if (Portfolio.Stocks[stock.Symbol] <= 0) Portfolio.Stocks.Remove(stock.Symbol);
+            user.Balance += proceeds;
+            stocks[stock.Symbol] = owned - req.Quantity;
+            if (stocks[stock.Symbol] <= 0) stocks.Remove(stock.Symbol);
+
+            user.StocksJson = JsonSerializer.Serialize(stocks);
+            user.UpdatedAt = DateTime.UtcNow;
 
             // small price impact persisted to DB
             var prev = stock.Price;
@@ -142,7 +299,7 @@ public class StocksController : ControllerBase
             PriceHistories[stock.Id].Add(stock.Price);
             if (PriceHistories[stock.Id].Count > 250) PriceHistories[stock.Id].RemoveAt(0);
 
-            return Ok(Portfolio);
+            return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
     }
 

@@ -19,4 +19,15 @@
     <PackageReference Include="Scalar.AspNetCore" Version="2.9.0" />
   </ItemGroup>
 
+  <!-- Prevent dotnet-watch from treating local SQLite files as watch inputs -->
+  <ItemGroup>
+  <DotNetWatchExclude Include="AppDbContext.db" />
+  <DotNetWatchExclude Include="AppDbContext.db-wal" />
+  <DotNetWatchExclude Include="AppDbContext.db-shm" />
+  <DotNetWatchExclude Include="**/*.db" />
+  <DotNetWatchExclude Include="**/*.db-wal" />
+  <DotNetWatchExclude Include="**/*.db-shm" />
+</ItemGroup>
+
+
 </Project>

@@ -41,7 +41,7 @@ namespace AppServerApi.Services
 
                     using (var scope = _provider.CreateScope())
                     {
-                        var db = (AppDbContext)scope.ServiceProvider.GetService(typeof(AppDbContext));
+                        var db = scope.ServiceProvider.GetService(typeof(AppDbContext)) as AppDbContext;
                         if (db == null) continue;
 
                         lock (MarketState.Locker)

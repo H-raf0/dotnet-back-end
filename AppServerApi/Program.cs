@@ -29,6 +29,9 @@ public class Program
         builder.Services.AddScoped<IJwtService, JwtService>();
         builder.Services.AddScoped<ITokenService, TokenService>();
 
+        // Background simulated trading service (keeps prices and simulated trades active)
+        builder.Services.AddHostedService<AppServerApi.Services.SimulatedTradingService>();
+
         // Configure JWT
         var accessTokenSecret = builder.Configuration["Jwt:AccessTokenSecret"];
         var refreshTokenSecret = builder.Configuration["Jwt:RefreshTokenSecret"];

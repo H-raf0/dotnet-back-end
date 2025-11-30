@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Security.Claims;
 using AppServerApi.Models;
+using AppServerApi.Services;
 
 namespace AppServerApi.Controllers;
 
@@ -13,19 +14,13 @@ namespace AppServerApi.Controllers;
 public class StocksController : ControllerBase
 {
     private readonly AppDbContext _db;
-    private static readonly object Locker = new();
-
-    // Keep price histories and other non-critical time-series in memory only.
-    private static readonly Dictionary<string, List<double>> PriceHistories = new();
-    // Ensure we only start the simulator once per app lifetime
-    private static bool SimulatorStarted = false;
 
     public StocksController(AppDbContext db)
     {
         _db = db;
 
         // Seed initial stocks in DB if none exist
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             if (!_db.Stocks.Any())
             {
@@ -40,64 +35,21 @@ public class StocksController : ControllerBase
                 _db.SaveChanges();
 
                 // seed price histories in memory
-                PriceHistories["1"] = new List<double>{120,125,130,135,140,145,148,150,152,150.25};
-                PriceHistories["2"] = new List<double>{90,92,94,93,95,96,95.5,96,96.5,95.8};
-                PriceHistories["3"] = new List<double>{75,76,77,78,77.5,78,78.2,78.8,78.3,78.5};
-                PriceHistories["4"] = new List<double>{200,202,205,207,208,209,210,210.5,210.2,210.1};
+                MarketState.PriceHistories["1"] = new List<double>{120,125,130,135,140,145,148,150,152,150.25};
+                MarketState.PriceHistories["2"] = new List<double>{90,92,94,93,95,96,95.5,96,96.5,95.8};
+                MarketState.PriceHistories["3"] = new List<double>{75,76,77,78,77.5,78,78.2,78.8,78.3,78.5};
+                MarketState.PriceHistories["4"] = new List<double>{200,202,205,207,208,209,210,210.5,210.2,210.1};
             }
 
             // Ensure price histories exist for any stocks (including persisted ones)
             var allStocks = _db.Stocks.ToList();
             foreach (var s in allStocks)
             {
-                if (!PriceHistories.ContainsKey(s.Id))
+                if (!MarketState.PriceHistories.ContainsKey(s.Id))
                 {
                     // initialize with a short history that ends with the persisted price
-                    PriceHistories[s.Id] = new List<double> { Math.Round(s.Price, 2) };
+                    MarketState.PriceHistories[s.Id] = new List<double> { Math.Round(s.Price, 2) };
                 }
-            }
-
-            // Start a background simulator (only once) that perturbs prices every 2 seconds
-            if (!SimulatorStarted)
-            {
-                SimulatorStarted = true;
-                // Run without awaiting - background fire-and-forget loop
-                _ = System.Threading.Tasks.Task.Run(async () =>
-                {
-                    var rnd = new Random();
-                    while (true)
-                    {
-                        try
-                        {
-                            await System.Threading.Tasks.Task.Delay(2000);
-                            lock (Locker)
-                            {
-                                var stocksToUpdate = _db.Stocks.ToList();
-                                foreach (var stk in stocksToUpdate)
-                                {
-                                    // Small random walk + mean reversion to limit drift
-                                    var prev = stk.Price;
-                                    var noise = (rnd.NextDouble() - 0.5) * 0.02; // ±1%
-                                    var meanRevert = 1 + (0 - noise) * 0.001;
-                                    var newP = Math.Round(prev * (1 + noise) * meanRevert, 2);
-                                    if (newP <= 0) newP = Math.Round(prev * (1 + noise), 2);
-
-                                    stk.Price = newP;
-                                    stk.Change = Math.Round((newP - prev) / (prev == 0 ? 1 : prev) * 100, 2);
-
-                                    if (!PriceHistories.ContainsKey(stk.Id)) PriceHistories[stk.Id] = new List<double> { prev };
-                                    PriceHistories[stk.Id].Add(stk.Price);
-                                    if (PriceHistories[stk.Id].Count > 250) PriceHistories[stk.Id].RemoveAt(0);
-                                }
-                                _db.SaveChanges();
-                            }
-                        }
-                        catch
-                        {
-                            // swallow simulator errors to avoid crashing the background loop
-                        }
-                    }
-                });
             }
         }
     }
@@ -105,7 +57,7 @@ public class StocksController : ControllerBase
     // Helper method to get the current user ID from JWT token
     private int GetUserId()
     {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier);
         if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
         {
             return userId;
@@ -116,10 +68,10 @@ public class StocksController : ControllerBase
     [HttpGet]
     public ActionResult<List<StockDto>> GetStocks()
     {
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             var stocks = _db.Stocks.ToList();
-            var dtos = stocks.Select(s => new StockDto(s.Id, s.Symbol, s.Name, s.Price, PriceHistories.ContainsKey(s.Id) ? PriceHistories[s.Id] : new List<double> { s.Price })).ToList();
+            var dtos = stocks.Select(s => new StockDto(s.Id, s.Symbol, s.Name, s.Price, MarketState.PriceHistories.ContainsKey(s.Id) ? MarketState.PriceHistories[s.Id] : new List<double> { s.Price })).ToList();
             return Ok(dtos);
         }
     }
@@ -131,7 +83,7 @@ public class StocksController : ControllerBase
         var userId = GetUserId();
         if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
 
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             var user = _db.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
@@ -162,7 +114,7 @@ public class StocksController : ControllerBase
         var userId = GetUserId();
         if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
 
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             var user = _db.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
@@ -197,7 +149,7 @@ public class StocksController : ControllerBase
         var userId = GetUserId();
         if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
 
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             var user = _db.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
@@ -238,9 +190,9 @@ public class StocksController : ControllerBase
             _db.SaveChanges();
 
             // keep expanded price history in-memory only
-            if (!PriceHistories.ContainsKey(stock.Id)) PriceHistories[stock.Id] = new List<double> { prev };
-            PriceHistories[stock.Id].Add(stock.Price);
-            if (PriceHistories[stock.Id].Count > 250) PriceHistories[stock.Id].RemoveAt(0);
+            if (!MarketState.PriceHistories.ContainsKey(stock.Id)) MarketState.PriceHistories[stock.Id] = new List<double> { prev };
+            MarketState.PriceHistories[stock.Id].Add(stock.Price);
+            if (MarketState.PriceHistories[stock.Id].Count > 250) MarketState.PriceHistories[stock.Id].RemoveAt(0);
 
             return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
@@ -255,7 +207,7 @@ public class StocksController : ControllerBase
         var userId = GetUserId();
         if (userId == 0) return Unauthorized(new { message = "Invalid or missing token", code = "INVALID_TOKEN" });
 
-        lock (Locker)
+        lock (MarketState.Locker)
         {
             var user = _db.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null) return NotFound(new { message = "User not found", code = "USER_NOT_FOUND" });
@@ -295,9 +247,9 @@ public class StocksController : ControllerBase
             _db.SaveChanges();
 
             // keep expanded price history in-memory only
-            if (!PriceHistories.ContainsKey(stock.Id)) PriceHistories[stock.Id] = new List<double> { prev };
-            PriceHistories[stock.Id].Add(stock.Price);
-            if (PriceHistories[stock.Id].Count > 250) PriceHistories[stock.Id].RemoveAt(0);
+            if (!MarketState.PriceHistories.ContainsKey(stock.Id)) MarketState.PriceHistories[stock.Id] = new List<double> { prev };
+            MarketState.PriceHistories[stock.Id].Add(stock.Price);
+            if (MarketState.PriceHistories[stock.Id].Count > 250) MarketState.PriceHistories[stock.Id].RemoveAt(0);
 
             return Ok(new PortfolioDto { Balance = user.Balance, Stocks = stocks });
         }
